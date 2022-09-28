@@ -596,7 +596,7 @@ if _LegacyOptimizer is not None:
                     device_sparse='', compression=Compression.none,
                     sparse_as_dense=False, op=Average, gradient_predivide_factor=1.0,
                     backward_passes_per_step=1, average_aggregated_gradients=False,
-                    groups=None, process_set=global_process_set):
+                    groups=None, process_set=global_process_set, scale_local_gradients=True):
             if name is None:
                 name = "Distributed{}".format(type(optimizer).__name__)
             super(_DistributedOptimizer, self).__init__(name=name, use_locking=use_locking)
@@ -607,6 +607,7 @@ if _LegacyOptimizer is not None:
                 gradient_predivide_factor, groups, process_set=process_set)
 
             self.process_set = process_set
+            self.scale_local_gradients = scale_local_gradients
             self._local_vars = set()
             self._agg_helper = None
             if backward_passes_per_step > 1:
@@ -623,7 +624,8 @@ if _LegacyOptimizer is not None:
                     average_aggregated_gradients=average_aggregated_gradients,
                     rank=rank(),
                     optimizer_type=LocalGradientAggregationHelper._OPTIMIZER_TYPE_LEGACY,
-                    process_set=process_set
+                    process_set=process_set,
+                    scale_local_gradients=scale_local_gradients
                 )
 
         def register_local_var(self, var):
@@ -672,20 +674,22 @@ if _LegacyOptimizer is not None:
                         for rv,rg in zip(rv, rg):
                             v2g[rv.ref()] = rg
 
-                        # Scale local gradients by a size factor. See pull/3695 and discussions/3705 for context.
-                        for v_ref in v2g:
-                            if v_ref in self._local_sources and v2g[v_ref]:
-                                v2g[v.ref()] /= horovod_size
+                        if self.scale_local_gradients:
+                            # Scale local gradients by a size factor. See pull/3695 and discussions/3705 for context. 
+                            for v_ref in v2g:
+                                if v_ref in self._local_sources and v2g[v_ref]:
+                                    v2g[v.ref()] /= horovod_size
 
                         return [v2g[rv.ref()] for rv in vars]
                     else:
                         for rv, rg in zip(rv, rg):
                             v2g[rv] = rg
 
-                        # Scale local gradients by a size factor. See pull/3695 and discussions/3705 for context.
-                        for v in v2g:
-                            if v in self._local_sources and v2g[v]:
-                                v2g[v] /= horovod_size
+                        if self.scale_local_gradients:
+                            # Scale local gradients by a size factor. See pull/3695 and discussions/3705 for context.
+                            for v in v2g:
+                                if v in self._local_sources and v2g[v]:
+                                    v2g[v] /= horovod_size
 
                         return [v2g[rv] for rv in vars]
 
@@ -820,7 +824,8 @@ def DistributedOptimizer(optimizer, name=None, use_locking=False, device_dense='
                          sparse_as_dense=False, backward_passes_per_step=1,
                          op=Average, gradient_predivide_factor=1.0,
                          average_aggregated_gradients=False,
-                         num_groups=0, groups=None, process_set=global_process_set):
+                         num_groups=0, groups=None,
+                         process_set=global_process_set, scale_local_gradients=True):
     """Construct a new DistributedOptimizer, which uses another optimizer
     under the hood for computing single-process gradient values and
     applying gradient updates after the gradient values have been combined
@@ -880,6 +885,7 @@ def DistributedOptimizer(optimizer, name=None, use_locking=False, device_dense='
         Defaults as None, which is no explicit groups.
       process_set: Gradients will only be reduced over Horovod processes belonging
         to this process set. Defaults to the global process set.
+      scale_local_gradients: Whether to scsale the gradients of local variables. Default is set to True.
     """
     if gradient_predivide_factor != 1.0:
         if rocm_built():
@@ -922,6 +928,7 @@ def DistributedOptimizer(optimizer, name=None, use_locking=False, device_dense='
             average_aggregated_gradients=average_aggregated_gradients,
             groups=groups,
             process_set=process_set,
+            scale_local_gradients=scale_local_gradients
         )
     elif isinstance(optimizer, tf.keras.optimizers.Optimizer):
         if op == Adasum:
@@ -939,6 +946,7 @@ def DistributedOptimizer(optimizer, name=None, use_locking=False, device_dense='
             backward_passes_per_step=backward_passes_per_step,
             average_aggregated_gradients=average_aggregated_gradients,
             process_set=process_set,
+            scale_local_gradients=scale_local_gradients
         )
     else:
         raise ValueError('Provided optimizer doesn\'t inherit from either legacy '

@@ -62,7 +62,7 @@ def DistributedOptimizer(optimizer, name=None,
                          average_aggregated_gradients=False,
                          num_groups=0,
                          groups=None,
-                         process_set=global_process_set):
+                         process_set=global_process_set, scale_local_gradients=True):
     """
     An optimizer that wraps another keras.optimizers.Optimizer, using an allreduce to
     average gradient values before applying gradients to model weights.
@@ -141,6 +141,7 @@ def DistributedOptimizer(optimizer, name=None,
         average_aggregated_gradients=average_aggregated_gradients,
         groups=groups,
         process_set=process_set,
+        scale_local_gradients=scale_local_gradients
     )
 
 
